@@ -1,0 +1,55 @@
+name: Deploy to Ubuntu Server #ci cd 작업명
+
+on:
+  push:
+    branches:
+      - master  # main 브랜치에 푸시될 때 트리거
+
+jobs: #새로운 github에서 제공하는 가상머신
+  build:
+    runs-on: ubuntu-latest #어떤환경에서 진행하는지 - 리눅스한경에서..
+
+    steps: #실행단계에 대한 설정
+    # 코드 체크아웃 - 서버로부터 코드를 가져온다. 즉 가상머신으로 소스를 복사해온다.
+    - name: Checkout repository
+      uses: actions/checkout@v2 # 소스복사
+
+    # JDK 17 설정
+    - name: Set up JDK 17 
+      uses: actions/setup-java@v1
+      with:
+        java-version: '17'
+
+    - name: Build with Gradle 
+      run: ./gradlew build #빌드 실행해라 
+
+     #아래 쪽은 보안통신쪽
+    - name: Set SSH key permissions
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa #변수명에 관한 부분과 
+        chmod 600 ~/.ssh/id_rsa  #권한을 나만 읽고 쓸수 있게 600으로 설정
+
+    - name: Add SSH key
+      uses: webfactory/ssh-agent@v0.5.3
+      with:
+        ssh-private-key: ${{ secrets.SERVER_SSH_KEY }} # 키 등록
+
+    - name: Add known_hosts
+      run: |
+        echo "3.38.246.161 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOv6VrKy37/jwgpn2LLby5EEg34Af2pSgBQaFoRGIPb7" >> ~/.ssh/known_hosts #우리의 서버주소로 변경, 우리서버의 키설정
+
+    - name: 기존프로세스 종료 - 변경사항이 생겨 push하면 이벤트가 일어나고 그러면 다시 소스가 복사되고 빌드해서 jar가 만들어지는 이미 실행중이면 안된다. 그래서 기존프로세스종료
+      run: |
+        kill -9 $(ps -ef | grep devops | grep -v grep | head -n 1 | awk '{print $2}') || true 
+
+    - name: Deploy to Server
+      run: scp -i ~/.ssh/id_rsa -r build/libs/*.jar ubuntu@3.38.246.161:~/app/  #scp 인증서를 가지고 우분투계정으로 복사 어디 app폴더 아래.
+
+
+    - name: Run SSH commands
+      run: |
+        ssh -i ~/.ssh/id_rsa ubuntu@3.38.246.161 << 'EOF'
+          nohup java -jar ~/app/devops_step0-0.0.1-SNAPSHOT.jar > log.txt 2>&1 &
+        EOF
+
